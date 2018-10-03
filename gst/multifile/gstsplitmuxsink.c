@@ -2544,7 +2544,8 @@ gst_splitmux_sink_request_new_pad (GstElement * element,
   gboolean is_video = FALSE;
   MqStreamCtx *ctx;
 
-  GST_DEBUG_OBJECT (element, "templ:%s, name:%s", templ->name_template, name);
+  GST_DEBUG_OBJECT (element, "request_new_pad templ->name_template=%s, name=%s",
+      templ->name_template, name);
 
   GST_SPLITMUX_LOCK (splitmux);
   if (!create_muxer (splitmux))
@@ -2557,12 +2558,16 @@ gst_splitmux_sink_request_new_pad (GstElement * element,
         goto already_have_video;
 
       /* FIXME: Look for a pad template with matching caps, rather than by name */
+      GST_DEBUG_OBJECT (element,
+          "searching for pad-template with name 'video_%%u'");
       mux_template =
           gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
           (splitmux->muxer), "video_%u");
 
       /* Fallback to find sink pad templates named 'video' (flvmux) */
       if (!mux_template) {
+        GST_DEBUG_OBJECT (element,
+            "searching for pad-template with name 'video'");
         mux_template =
             gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
             (splitmux->muxer), "video");
@@ -2570,30 +2575,69 @@ gst_splitmux_sink_request_new_pad (GstElement * element,
       is_video = TRUE;
       name = NULL;
     } else {
+      GST_DEBUG_OBJECT (element, "searching for pad-template with name '%s'",
+          templ->name_template);
       mux_template =
           gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
           (splitmux->muxer), templ->name_template);
 
       /* Fallback to find sink pad templates named 'audio' (flvmux) */
       if (!mux_template) {
+        GST_DEBUG_OBJECT (element,
+            "searching for pad-template with name 'audio'");
         mux_template =
             gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
             (splitmux->muxer), "audio");
         name = NULL;
       }
     }
+
     if (mux_template == NULL) {
-      /* Fallback to find sink pad templates named 'sink_%d' (mpegtsmux) */
+      GST_DEBUG_OBJECT (element,
+          "searching for pad-template with name 'sink_%%d'");
       mux_template =
           gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
           (splitmux->muxer), "sink_%d");
       name = NULL;
     }
+    if (mux_template == NULL) {
+      GST_DEBUG_OBJECT (element, "searching for pad-template with name 'sink'");
+      mux_template =
+          gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS
+          (splitmux->muxer), "sink");
+      name = NULL;
+    }
   }
 
-  res = gst_element_request_pad (splitmux->muxer, mux_template, name, caps);
-  if (res == NULL)
+  if (mux_template == NULL) {
+    GST_ERROR_OBJECT (element,
+        "unable to find a suitable sink pad-template on the muxer");
+
     goto fail;
+  }
+  GST_DEBUG_OBJECT (element, "found sink pad-template '%s' on the muxer",
+      mux_template->name_template);
+
+  if (mux_template->presence == GST_PAD_REQUEST) {
+    GST_DEBUG_OBJECT (element, "requesting dynamic pad form pad-template");
+
+    res = gst_element_request_pad (splitmux->muxer, mux_template, name, caps);
+    if (res == NULL)
+      goto fail;
+  } else if (mux_template->presence == GST_PAD_ALWAYS) {
+    GST_DEBUG_OBJECT (element, "accessing static-preset pad form pad-template");
+
+    res =
+        gst_element_get_static_pad (splitmux->muxer,
+        mux_template->name_template);
+    if (res == NULL)
+      goto fail;
+  } else {
+    GST_ERROR_OBJECT (element,
+        "unexpected pad-presence (neither request nor always");
+
+    goto fail;
+  }
 
   if (is_video)
     gname = g_strdup ("video");
